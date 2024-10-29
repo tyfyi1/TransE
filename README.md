@@ -120,3 +120,113 @@ TransE的目标是使得每个三元组（h, r, t）在嵌入空间中满足以�
     EMBEDDING_DIM = 5  # 嵌入维度
     LR = 0.1  # 学习率
     BATCH_SIZE = 8192  # 批处理大小
+
+5.开始训练，每训练完成一轮，输出一次训练损失，同时每训练完成十轮进行一次线形图绘制并保存模型权重与优化器设置，便于后续使用及更直观地看到训练损失：
+   
+    for epoch in range(1000):
+    for i in range(0, len(triplets), BATCH_SIZE):
+        batch_triplets = triplets[i:i + BATCH_SIZE]
+        heads, relations, tails = batch_triplets[:, 0], batch_triplets[:, 1], batch_triplets[:, 2]
+
+        negative_samples = generate_negative_samples(batch_triplets, ENTITY_NUM, negative_sample_size=1)
+        negative_heads, negative_relations, negative_tails = negative_samples[:, 0], negative_samples[:,1], negative_samples[:, 2]
+
+        optimizer.zero_grad()
+
+        positive_loss = model.distance(heads, relations, tails).mean()
+        negative_loss = model.distance(negative_heads, negative_relations, negative_tails).mean()
+
+        loss = positive_loss + negative_loss
+        loss.backward()
+        optimizer.step()
+
+    if epoch % 1 == 0:
+        train_losses.append(loss.item())
+        print(f'Epoch {epoch}: Loss = {loss.item()}')
+
+    if epoch % 10 == 0:
+        eval_loss = evaluate(model, triplets, ENTITY_NUM)
+        eval_losses.append(eval_loss) 
+        print(f'Epoch {epoch}: Evaluation Loss = {eval_loss}')
+        plt.figure(figsize=(12, 5))
+
+        model_path = r'D:\pycode\pythonProject2\model\model.pth'  # 模型保存路径
+        optimizer_path = r'D:\pycode\pythonProject2\optimizer\optimizer.pth'  # 优化器保存路径
+
+        torch.save(model.state_dict(), model_path)
+        torch.save(optimizer.state_dict(), optimizer_path)
+
+        plt.subplot(1, 2, 1)
+        plt.plot(train_losses, label='Training Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Training Loss per Epoch')
+        plt.legend()
+        plt.grid(True)
+
+        plt.subplot(1, 2, 2)
+        plt.plot(eval_losses, label='Evaluation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Evaluation Loss per Epoch')
+        plt.legend()
+        plt.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+6.引用训练完成后的模型权重model.pth，对json进行处理与重写，修改output中的片段，使其输出最有可能的五个实体或关系（在预测函数中得分最高的五个）：
+
+    def predict_entity(model, head_entity, relation, entity_dict, relation_dict, id_to_entity, top_k=5):
+        head_idx = torch.tensor([entity_dict[head_entity]])
+        relation_idx = torch.tensor([relation_dict[relation]])
+
+        head_embedding = model.entity_embeddings(head_idx)
+        relation_embedding = model.relation_embeddings(relation_idx)
+        combined_embedding = head_embedding + relation_embedding
+
+        all_entity_embeddings = model.entity_embeddings.weight
+        scores = -torch.norm(combined_embedding - all_entity_embeddings, p=1, dim=1)
+
+        scores[entity_dict[head_entity]] = float('-inf')
+
+        top_scores, top_indices = torch.topk(scores, top_k)
+        top_entities = [id_to_entity[idx.item()] for idx in top_indices]
+        return top_entities
+
+
+    def predict_relation(model, head_entity, tail_entity, entity_dict, relation_dict,id_to_relation, top_k=5):
+        head_idx = torch.tensor([entity_dict[head_entity]])
+        tail_idx = torch.tensor([entity_dict[tail_entity]])
+
+        head_embedding = model.entity_embeddings(head_idx)
+        tail_embedding = model.entity_embeddings(tail_idx)
+
+        all_relation_embeddings = model.relation_embeddings.weight
+        scores = -torch.norm(head_embedding + all_relation_embeddings - tail_embedding, p=1, dim=1)
+
+        top_scores, top_indices = torch.topk(scores, top_k)
+
+        top_relations = [id_to_relation[idx.item()] for idx in top_indices]  # 使用 id_to_relation 字典
+        return top_relations
+
+7.读取json文件获取任务并进行修改:
+
+    for item in data.get('entity_prediction', []):
+        head_entity = item['input'][0]
+        relation = item['input'][1]
+        predicted_entities = predict_entity(model, head_entity, relation, entity_dict, relation_dict,id_to_entity, top_k=5)
+        item['output'] = predicted_entities
+
+处理 link_prediction 任务
+
+    for item in data.get('link_prediction', []):
+        head_entity = item['input'][0]
+        tail_entity = item['input'][1]
+        predicted_relations = predict_relation(model, head_entity, tail_entity, entity_dict, relation_dict,id_to_relation,top_k=5)
+        item['output'] = predicted_relations
+将更新后的数据写回 JSON 文件
+ 
+    with open(r"C:\Users\86159\Desktop\123.json",'w',encoding='utf-8') as file:
+        json.dump(data, file,ensure_ascii=False, indent=4)
+最后文件保存时采用了file,ensure_ascii=False参数，因为经过测试，用utf-8进行读写后，原文件中的中文字符默认改为了以utf-8编码的形式存在，需要修改回来
