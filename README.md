@@ -29,9 +29,13 @@ TransE的目标是使得每个三元组（h, r, t）在嵌入空间中满足以�
 代码实现流程：
 1.训练数据提取：
   将储存在本地文件的txt格式的训练数据进行提取并处理为（h，r，t）的三元组，可通过以下代码进行实现：
+
 file_path = r'C:\Users\86159\Desktop\workreport\subgraph_kgp1.txt'
+
 rows = []
+
 with open(file_path, 'r', encoding='utf-8') as file:
+    
     for line in file:
         parts = line.strip().split()
         if len(parts) == 12:
